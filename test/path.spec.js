@@ -163,6 +163,87 @@ test("does not remove vertices from result", (t) => {
   expect(path.weight).toBeCloseTo(21.9574);
 });
 
+test("direction bias favours moving toward the destination", () => {
+  const network = {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [0, 0],
+            [5, 5],
+          ],
+        },
+      },
+      {
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [5, 5],
+            [10, 0],
+          ],
+        },
+      },
+      {
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [0, 0],
+            [-1, 0],
+          ],
+        },
+      },
+      {
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [-1, 0],
+            [10, 0],
+          ],
+        },
+      },
+    ],
+  };
+
+  const pathfinder = new PathFinder(network);
+  const start = point([0, 0]);
+  const finish = point([10, 0]);
+
+  const unbiased = pathfinder.findPath(start, finish);
+  expect(unbiased).toBeTruthy();
+  expect(unbiased.path.some((coord) => coord[0] === -1 && coord[1] === 0)).toBe(
+    true
+  );
+
+  const biased = pathfinder.findPath(start, finish, {
+    directionBias({ fromToVector, fromGoalVector }) {
+      const stepLength = Math.hypot(fromToVector[0], fromToVector[1]);
+      const goalLength = Math.hypot(fromGoalVector[0], fromGoalVector[1]);
+      if (stepLength === 0 || goalLength === 0) {
+        return 0;
+      }
+
+      const alignment =
+        (fromToVector[0] * fromGoalVector[0] +
+          fromToVector[1] * fromGoalVector[1]) /
+        (stepLength * goalLength);
+
+      return alignment < 0 ? Math.abs(alignment) * 1000 : 0;
+    },
+  });
+
+  expect(biased).toBeTruthy();
+  expect(
+    biased.path.some((coord) => coord[0] === -1 && coord[1] === 0)
+  ).toBe(false);
+  expect(unbiased.weight).toBeLessThan(biased.weight);
+});
+
 test("can make oneway network", () => {
   const network = {
     type: "FeatureCollection",

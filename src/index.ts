@@ -12,7 +12,13 @@ import findPath from "./dijkstra";
 import preprocess from "./preprocessor";
 import roundCoord from "./round-coord";
 import { defaultKey } from "./topology";
-import { Key, Path, PathFinderGraph, PathFinderOptions } from "./types";
+import {
+  Key,
+  Path,
+  PathFinderGraph,
+  PathFinderOptions,
+  PathFinderSearchOptions,
+} from "./types";
 
 export default class PathFinder<
   TEdgeReduce,
@@ -41,7 +47,8 @@ export default class PathFinder<
 
   findPath(
     a: Feature<Point>,
-    b: Feature<Point>
+    b: Feature<Point>,
+    searchOptions: PathFinderSearchOptions = {}
   ): Path<TEdgeReduce> | undefined {
     const { key = defaultKey, tolerance = 1e-5 } = this.options;
     const start = key(roundCoord(a.geometry.coordinates, tolerance));
@@ -56,7 +63,59 @@ export default class PathFinder<
     const phantomStart = this._createPhantom(start);
     const phantomEnd = this._createPhantom(finish);
     try {
-      const pathResult = findPath(this.graph.compactedVertices, start, finish);
+      const goalCoordinate = this.graph.sourceCoordinates[finish];
+      const directionBias =
+        searchOptions.directionBias && goalCoordinate
+          ? ({ cost, from, to, path }: {
+              cost: number;
+              from: Key;
+              to: Key;
+              path: Key[];
+            }) => {
+              const fromCoordinate = this.graph.sourceCoordinates[from];
+              const toCoordinate =
+                this.graph.sourceCoordinates[to] ??
+                this._resolveCompactedCoordinate(from, to);
+
+              if (!fromCoordinate || !toCoordinate) {
+                return 0;
+              }
+
+              const fromToVector = ([
+                toCoordinate[0] - fromCoordinate[0],
+                toCoordinate[1] - fromCoordinate[1],
+              ] as [number, number]);
+              const fromGoalVector = ([
+                goalCoordinate[0] - fromCoordinate[0],
+                goalCoordinate[1] - fromCoordinate[1],
+              ] as [number, number]);
+              const toGoalVector = ([
+                goalCoordinate[0] - toCoordinate[0],
+                goalCoordinate[1] - toCoordinate[1],
+              ] as [number, number]);
+
+              return searchOptions.directionBias!({
+                cost,
+                from: fromCoordinate,
+                to: toCoordinate,
+                goal: goalCoordinate,
+                fromToVector,
+                fromGoalVector,
+                toGoalVector,
+                path,
+              });
+            }
+          : undefined;
+      const pathResult = findPath(
+        this.graph.compactedVertices,
+        start,
+        finish,
+        directionBias
+          ? {
+              directionBias,
+            }
+          : undefined
+      );
 
       if (pathResult) {
         const [weight, path] = pathResult;
@@ -113,6 +172,14 @@ export default class PathFinder<
       this._removePhantom(phantomStart);
       this._removePhantom(phantomEnd);
     }
+  }
+
+  private _resolveCompactedCoordinate(from: Key, to: Key) {
+    const coordinates = this.graph.compactedCoordinates[from]?.[to];
+    if (!coordinates || coordinates.length === 0) {
+      return undefined;
+    }
+    return coordinates[coordinates.length - 1];
   }
 
   _createPhantom(n: Key) {

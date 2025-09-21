@@ -36,6 +36,37 @@ export type Vertices = Record<Key, Vertex>;
  */
 export type Coordinates = Record<Key, Position>;
 
+export type DirectionBiasContext = {
+  /** Coordinate of the vertex being expanded. */
+  from: Position;
+  /** Coordinate of the neighbouring vertex being evaluated. */
+  to: Position;
+  /** Coordinate of the destination vertex. */
+  goal: Position;
+  /** Vector from the current vertex towards the neighbour. */
+  fromToVector: [number, number];
+  /** Vector from the current vertex towards the goal. */
+  fromGoalVector: [number, number];
+  /** Vector from the neighbour towards the goal. */
+  toGoalVector: [number, number];
+  /**
+   * The path (as vertex keys) that has been traversed so far, ending at the
+   * current vertex.
+   */
+  path: Key[];
+  /** The accumulated weight for the current vertex before evaluating the edge. */
+  cost: number;
+};
+
+export type PathFinderSearchOptions = {
+  /**
+   * Optional callback used to influence the traversal cost of each edge based
+   * on how well it aligns with the direction of the goal. Returning a positive
+   * number penalises the edge, while a negative number rewards it.
+   */
+  directionBias?: (context: DirectionBiasContext) => number;
+};
+
 export type PathFinderGraph<TEdgeData> = {
   vertices: Vertices;
   edgeData: Record<Key, Record<Key, TEdgeData | undefined>>;

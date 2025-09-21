@@ -63,6 +63,37 @@ const pathLineString = pathToGeoJSON(pathFinder.findPath(start, finish));
 
 (If `findPath` does not find a path, pathToGeoJSON will also return `undefined`.)
 
+### Steering the search direction
+
+`findPath` accepts an optional third argument where you can provide search specific options. The
+`directionBias` option lets you influence the incremental cost of each edge based on how well it keeps the
+route moving toward the destination. Returning a positive value penalises the candidate step while a
+negative value rewards it.
+
+This is particularly useful for rail networks where reversing or backing into sidings should be avoided even
+if doing so would create a shorter path. The callback receives the current and next coordinates together with
+precomputed vectors that point toward the neighbour and the destination:
+
+```javascript
+const trainPath = pathFinder.findPath(start, finish, {
+  directionBias({ fromToVector, fromGoalVector }) {
+    const stepLength = Math.hypot(fromToVector[0], fromToVector[1]);
+    const goalLength = Math.hypot(fromGoalVector[0], fromGoalVector[1]);
+    if (stepLength === 0 || goalLength === 0) return 0;
+
+    const alignment =
+      (fromToVector[0] * fromGoalVector[0] + fromToVector[1] * fromGoalVector[1]) /
+      (stepLength * goalLength);
+
+    // Strongly penalise reversing so trains keep moving forward.
+    return alignment < 0 ? Math.abs(alignment) * 1000 : 0;
+  },
+});
+```
+
+When the dot product (`alignment`) is negative the neighbour heads away from the goal, so the example above
+adds a large penalty to keep the search aligned with the main line.
+
 ### `PathFinder` options
 
 The `PathFinder` constructor takes an optional seconds parameter containing `options` that you can
