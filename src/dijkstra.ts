@@ -3,10 +3,22 @@ import { Key, Vertices } from "./types";
 
 type State = [number, Key[], Key];
 
+type DirectionBiasEvaluator = (input: {
+  cost: number;
+  from: Key;
+  to: Key;
+  path: Key[];
+}) => number;
+
+type Options = {
+  directionBias?: DirectionBiasEvaluator;
+};
+
 export default function findPath(
   graph: Vertices,
   start: Key,
-  end: Key
+  end: Key,
+  options: Options = {}
 ): [number, Key[]] | undefined {
   const costs: Record<Key, number> = { [start]: 0 };
   const initialState: State = [0, [start], start];
@@ -26,7 +38,15 @@ export default function findPath(
 
     const neighbours = graph[node];
     Object.keys(neighbours).forEach(function (n) {
-      var newCost = cost + neighbours[n];
+      const bias = options.directionBias
+        ? options.directionBias({
+            cost,
+            from: node,
+            to: n,
+            path: state[1],
+          })
+        : 0;
+      var newCost = cost + neighbours[n] + bias;
       if (newCost < Infinity && (!(n in costs) || newCost < costs[n])) {
         costs[n] = newCost;
         const newState: State = [newCost, state[1].concat([n]), n];
