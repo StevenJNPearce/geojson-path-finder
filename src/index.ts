@@ -51,8 +51,10 @@ export default class PathFinder<
     searchOptions: PathFinderSearchOptions = {}
   ): Path<TEdgeReduce> | undefined {
     const { key = defaultKey, tolerance = 1e-5 } = this.options;
-    const start = key(roundCoord(a.geometry.coordinates, tolerance));
-    const finish = key(roundCoord(b.geometry.coordinates, tolerance));
+    const startCoordinates = roundCoord(a.geometry.coordinates, tolerance);
+    const finishCoordinates = roundCoord(b.geometry.coordinates, tolerance);
+    const start = this._resolveVertexKey(startCoordinates, key, tolerance);
+    const finish = this._resolveVertexKey(finishCoordinates, key, tolerance);
 
     // We can't find a path if start or finish isn't in the
     // set of non-compacted vertices
@@ -180,6 +182,43 @@ export default class PathFinder<
       return undefined;
     }
     return coordinates[coordinates.length - 1];
+  }
+
+  private _resolveVertexKey(
+    coordinate: Position,
+    keyFn: (coordinates: Position) => Key,
+    tolerance: number
+  ): Key {
+    const directKey = keyFn(coordinate);
+    if (this.graph.vertices[directKey]) {
+      return directKey;
+    }
+
+    const matches: Key[] = [];
+    for (const [vertexKey, sourceCoordinate] of Object.entries(
+      this.graph.sourceCoordinates
+    )) {
+      const roundedSource = roundCoord(sourceCoordinate, tolerance);
+      if (
+        roundedSource[0] === coordinate[0] &&
+        roundedSource[1] === coordinate[1]
+      ) {
+        matches.push(vertexKey);
+      }
+    }
+
+    if (matches.length === 1) {
+      return matches[0];
+    }
+
+    if (matches.length > 1) {
+      throw new Error(
+        `Ambiguous vertex coordinate: ${JSON.stringify(coordinate)}. ` +
+          `Matches multiple vertices (${matches.join(", ")}).`
+      );
+    }
+
+    return directKey;
   }
 
   _createPhantom(n: Key) {
