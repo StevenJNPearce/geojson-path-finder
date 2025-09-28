@@ -4,6 +4,7 @@ import PathFinder from "../src/index";
 import geojson from "./network.json";
 import geojson66 from "./66.json";
 import largeNetwork from "./large-network.json";
+import linestring3d from "./linestring-3d.json";
 import { point } from "@turf/helpers";
 import distance from "@turf/distance";
 import osmWeight from "./osm-weight";
@@ -360,4 +361,16 @@ test("can route through large, complex one-way network", () => {
   expect(path).toBeTruthy();
   expect(path.path).toBeTruthy();
   expect(path.weight).toBeGreaterThan(0);
+});
+
+test("findPath maps 2D start and finish onto 3D vertices", () => {
+  const pathfinder = new PathFinder(linestring3d);
+  const path = pathfinder.findPath(point([0, 0]), point([2, 0]));
+
+  expect(path).toBeTruthy();
+  expect(path?.path).toEqual([
+    [0, 0, 0],
+    [1, 0, 5],
+    [2, 0, 10],
+  ]);
 });
