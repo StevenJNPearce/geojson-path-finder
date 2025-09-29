@@ -49,6 +49,10 @@ export type DirectionBiasContext = {
   fromGoalVector: [number, number];
   /** Vector from the neighbour towards the goal. */
   toGoalVector: [number, number];
+  /** Coordinate of the previous vertex on the path, when available. */
+  previous?: Position;
+  /** Vector from the previous vertex towards the current vertex, when available. */
+  previousToFromVector?: [number, number];
   /**
    * The path (as vertex keys) that has been traversed so far, ending at the
    * current vertex.
@@ -58,6 +62,8 @@ export type DirectionBiasContext = {
   cost: number;
 };
 
+export type TransitionGuardContext = DirectionBiasContext;
+
 export type PathFinderSearchOptions = {
   /**
    * Optional callback used to influence the traversal cost of each edge based
@@ -65,6 +71,12 @@ export type PathFinderSearchOptions = {
    * number penalises the edge, while a negative number rewards it.
    */
   directionBias?: (context: DirectionBiasContext) => number;
+  /**
+   * Optional callback used to veto a candidate transition entirely. Returning
+   * `false` prevents the neighbour from being explored, while throwing aborts
+   * the search.
+   */
+  transitionGuard?: (context: TransitionGuardContext) => boolean | void;
   /**
    * Selects which search algorithm should be used. Defaults to Dijkstra.
    */

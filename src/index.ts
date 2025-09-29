@@ -14,6 +14,7 @@ import preprocess from "./preprocessor";
 import roundCoord from "./round-coord";
 import { defaultKey } from "./topology";
 import {
+  DirectionBiasContext,
   Key,
   Path,
   PathFinderGraph,
@@ -67,6 +68,72 @@ export default class PathFinder<
     const phantomEnd = this._createPhantom(finish);
     try {
       const goalCoordinate = this.graph.sourceCoordinates[finish];
+      const buildTraversalContext = ({
+        cost,
+        from,
+        to,
+        path,
+      }: {
+        cost: number;
+        from: Key;
+        to: Key;
+        path: Key[];
+      }) => {
+        const previousKey = path.length > 1 ? path[path.length - 2] : undefined;
+        const fromCoordinate =
+          this.graph.sourceCoordinates[from] ??
+          (previousKey !== undefined
+            ? this._resolveCompactedCoordinate(previousKey, from)
+            : undefined);
+        const toCoordinate =
+          this.graph.sourceCoordinates[to] ??
+          this._resolveCompactedCoordinate(from, to);
+
+        if (!fromCoordinate || !toCoordinate || !goalCoordinate) {
+          return undefined;
+        }
+
+        const fromToVector = [
+          toCoordinate[0] - fromCoordinate[0],
+          toCoordinate[1] - fromCoordinate[1],
+        ] as [number, number];
+        const fromGoalVector = [
+          goalCoordinate[0] - fromCoordinate[0],
+          goalCoordinate[1] - fromCoordinate[1],
+        ] as [number, number];
+        const toGoalVector = [
+          goalCoordinate[0] - toCoordinate[0],
+          goalCoordinate[1] - toCoordinate[1],
+        ] as [number, number];
+
+        const context: DirectionBiasContext = {
+          cost,
+          from: fromCoordinate,
+          to: toCoordinate,
+          goal: goalCoordinate,
+          fromToVector,
+          fromGoalVector,
+          toGoalVector,
+          path,
+        };
+
+        if (previousKey !== undefined) {
+          const previousCoordinate =
+            this.graph.sourceCoordinates[previousKey] ??
+            this._resolveCompactedCoordinate(previousKey, from);
+
+          if (previousCoordinate) {
+            context.previous = previousCoordinate;
+            context.previousToFromVector = [
+              fromCoordinate[0] - previousCoordinate[0],
+              fromCoordinate[1] - previousCoordinate[1],
+            ] as [number, number];
+          }
+        }
+
+        return context;
+      };
+
       const directionBias =
         searchOptions.directionBias && goalCoordinate
           ? ({ cost, from, to, path }: {
@@ -75,42 +142,33 @@ export default class PathFinder<
               to: Key;
               path: Key[];
             }) => {
-              const fromCoordinate = this.graph.sourceCoordinates[from];
-              const toCoordinate =
-                this.graph.sourceCoordinates[to] ??
-                this._resolveCompactedCoordinate(from, to);
-
-              if (!fromCoordinate || !toCoordinate) {
+              const context = buildTraversalContext({ cost, from, to, path });
+              if (!context) {
                 return 0;
               }
+              return searchOptions.directionBias!(context);
+            }
+          : undefined;
+      const transitionGuard =
+        searchOptions.transitionGuard && goalCoordinate
+          ? ({ cost, from, to, path }: {
+              cost: number;
+              from: Key;
+              to: Key;
+              path: Key[];
+            }) => {
+              const context = buildTraversalContext({ cost, from, to, path });
+              if (!context) {
+                return true;
+              }
 
-              const fromToVector = ([
-                toCoordinate[0] - fromCoordinate[0],
-                toCoordinate[1] - fromCoordinate[1],
-              ] as [number, number]);
-              const fromGoalVector = ([
-                goalCoordinate[0] - fromCoordinate[0],
-                goalCoordinate[1] - fromCoordinate[1],
-              ] as [number, number]);
-              const toGoalVector = ([
-                goalCoordinate[0] - toCoordinate[0],
-                goalCoordinate[1] - toCoordinate[1],
-              ] as [number, number]);
-
-              return searchOptions.directionBias!({
-                cost,
-                from: fromCoordinate,
-                to: toCoordinate,
-                goal: goalCoordinate,
-                fromToVector,
-                fromGoalVector,
-                toGoalVector,
-                path,
-              });
+              const result = searchOptions.transitionGuard!(context);
+              return result !== false;
             }
           : undefined;
       const sharedOptions = {
         ...(directionBias ? { directionBias } : {}),
+        ...(transitionGuard ? { transitionGuard } : {}),
         ...(searchOptions.onNodeExpanded
           ? { onNodeExpanded: searchOptions.onNodeExpanded }
           : {}),
