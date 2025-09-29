@@ -72,14 +72,32 @@ negative value rewards it.
 
 This is particularly useful for rail networks where reversing or backing into sidings should be avoided even
 if doing so would create a shorter path. The callback receives the current and next coordinates together with
-precomputed vectors that point toward the neighbour and the destination:
+precomputed vectors that point toward the neighbour and the destination. When the search has already traversed
+at least one edge it will also expose the previous coordinate and heading, letting you measure how sharply the
+train is turning at the switch:
 
 ```javascript
 const trainPath = pathFinder.findPath(start, finish, {
-  directionBias({ fromToVector, fromGoalVector }) {
+  directionBias({ fromToVector, fromGoalVector, previousToFromVector }) {
     const stepLength = Math.hypot(fromToVector[0], fromToVector[1]);
     const goalLength = Math.hypot(fromGoalVector[0], fromGoalVector[1]);
     if (stepLength === 0 || goalLength === 0) return 0;
+
+    if (previousToFromVector) {
+      const prevLength = Math.hypot(
+        previousToFromVector[0],
+        previousToFromVector[1]
+      );
+      if (prevLength !== 0) {
+        const headingAlignment =
+          (fromToVector[0] * previousToFromVector[0] +
+            fromToVector[1] * previousToFromVector[1]) /
+          (stepLength * prevLength);
+        if (headingAlignment < 0.25) {
+          return Math.abs(headingAlignment - 0.25) * 2000;
+        }
+      }
+    }
 
     const alignment =
       (fromToVector[0] * fromGoalVector[0] + fromToVector[1] * fromGoalVector[1]) /
@@ -93,6 +111,35 @@ const trainPath = pathFinder.findPath(start, finish, {
 
 When the dot product (`alignment`) is negative the neighbour heads away from the goal, so the example above
 adds a large penalty to keep the search aligned with the main line.
+
+If a reversal should be completely forbidden you can supply a `transitionGuard`. Returning `false` skips the
+neighbour entirely, while throwing aborts the search. The context matches `directionBias`, so you can reuse
+the same heading calculations:
+
+```javascript
+const guard = ({ previousToFromVector, fromToVector }) => {
+  if (!previousToFromVector) return true;
+  const prevLength = Math.hypot(previousToFromVector[0], previousToFromVector[1]);
+  const stepLength = Math.hypot(fromToVector[0], fromToVector[1]);
+  if (prevLength === 0 || stepLength === 0) return true;
+
+  const alignment =
+    (previousToFromVector[0] * fromToVector[0] +
+      previousToFromVector[1] * fromToVector[1]) /
+    (prevLength * stepLength);
+
+  if (alignment < 0) {
+    throw new Error("reverse moves are not allowed");
+  }
+
+  return true;
+};
+
+pathFinder.findPath(start, finish, { transitionGuard: guard });
+```
+
+This hook lets you turn heuristic penalties into hard failures, ensuring the solver never plans a manoeuvre
+that would be geometrically impossible for the rolling stock.
 
 ### `PathFinder` options
 

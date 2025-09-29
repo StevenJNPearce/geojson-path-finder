@@ -245,6 +245,97 @@ test("direction bias favours moving toward the destination", () => {
   expect(unbiased.weight).toBeLessThan(biased.weight);
 });
 
+test("transition guard blocks reversing moves", () => {
+  const network = {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [0, 0],
+            [1, 0],
+          ],
+        },
+      },
+      {
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [1, 0],
+            [0, 1],
+          ],
+        },
+      },
+      {
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [1, 0],
+            [2, 0],
+          ],
+        },
+      },
+    ],
+  };
+
+  const pathfinder = new PathFinder(network);
+  const start = point([0, 0]);
+  const finish = point([0, 1]);
+
+  const allowed = pathfinder.findPath(start, finish);
+  expect(allowed).toBeTruthy();
+  expect(allowed?.path).toEqual([
+    [0, 0],
+    [1, 0],
+    [0, 1],
+  ]);
+
+  let guardCalls = 0;
+  let rejected = 0;
+  const alignments = [];
+
+  const blocked = pathfinder.findPath(start, finish, {
+    transitionGuard({ previousToFromVector, fromToVector }) {
+      guardCalls += 1;
+      if (!previousToFromVector) {
+        return true;
+      }
+
+      const prevLength = Math.hypot(
+        previousToFromVector[0],
+        previousToFromVector[1]
+      );
+      const stepLength = Math.hypot(fromToVector[0], fromToVector[1]);
+      if (prevLength === 0 || stepLength === 0) {
+        return true;
+      }
+
+      const alignment =
+        (previousToFromVector[0] * fromToVector[0] +
+          previousToFromVector[1] * fromToVector[1]) /
+        (prevLength * stepLength);
+
+      alignments.push(alignment);
+
+      if (alignment < 0) {
+        rejected += 1;
+        return false;
+      }
+
+      return true;
+    },
+  });
+
+  expect(blocked).toBeUndefined();
+  expect(guardCalls).toBeGreaterThan(0);
+  expect(rejected).toBeGreaterThan(0);
+  expect(alignments.some((value) => value < 0)).toBe(true);
+});
+
 test("can make oneway network", () => {
   const network = {
     type: "FeatureCollection",
