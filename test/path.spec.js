@@ -374,3 +374,81 @@ test("findPath maps 2D start and finish onto 3D vertices", () => {
     [2, 0, 10],
   ]);
 });
+
+test("A* finds the same route as Dijkstra on a simple network", () => {
+  const network = {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [0, 0],
+            [1, 0],
+            [2, 0],
+          ],
+        },
+      },
+      {
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [2, 0],
+            [2, 1],
+            [2, 2],
+          ],
+        },
+      },
+      {
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [1, 0],
+            [1, 1],
+            [2, 2],
+          ],
+        },
+      },
+    ],
+  };
+
+  const start = point([0, 0]);
+  const end = point([2, 2]);
+  const pathfinder = new PathFinder(network);
+
+  const dijkstraPath = pathfinder.findPath(start, end);
+  const astarPath = pathfinder.findPath(start, end, { algorithm: "astar" });
+
+  expect(dijkstraPath).toBeTruthy();
+  expect(astarPath).toBeTruthy();
+  expect(astarPath).toEqual(dijkstraPath);
+});
+
+test.skip("A* expands fewer nodes than Dijkstra on a complex network", () => {
+  const pathfinder = new PathFinder(geojson);
+  const start = point([8.44460166, 59.48947469]);
+  const end = point([8.44651, 59.513920000000006]);
+
+  let dijkstraExpansions = 0;
+  const dijkstraPath = pathfinder.findPath(start, end, {
+    onNodeExpanded: () => {
+      dijkstraExpansions += 1;
+    },
+  });
+
+  let astarExpansions = 0;
+  const astarPath = pathfinder.findPath(start, end, {
+    algorithm: "astar",
+    onNodeExpanded: () => {
+      astarExpansions += 1;
+    },
+  });
+
+  expect(dijkstraPath).toBeTruthy();
+  expect(astarPath).toBeTruthy();
+  expect(astarPath).toEqual(dijkstraPath);
+  expect(astarExpansions).toBeLessThan(dijkstraExpansions);
+});

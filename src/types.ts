@@ -65,6 +65,14 @@ export type PathFinderSearchOptions = {
    * number penalises the edge, while a negative number rewards it.
    */
   directionBias?: (context: DirectionBiasContext) => number;
+  /**
+   * Selects which search algorithm should be used. Defaults to Dijkstra.
+   */
+  algorithm?: "dijkstra" | "astar";
+  /**
+   * Optional callback invoked when a vertex is expanded during the search.
+   */
+  onNodeExpanded?: (context: { key: Key; cost: number }) => void;
 };
 
 export type PathFinderGraph<TEdgeData> = {
