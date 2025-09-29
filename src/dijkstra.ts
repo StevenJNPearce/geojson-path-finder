@@ -12,6 +12,7 @@ type DirectionBiasEvaluator = (input: {
 
 type Options = {
   directionBias?: DirectionBiasEvaluator;
+  onNodeExpanded?: (context: { key: Key; cost: number }) => void;
 };
 
 export default function findPath(
@@ -32,6 +33,8 @@ export default function findPath(
 
     const cost = state[0];
     const node = state[2];
+
+    options.onNodeExpanded?.({ key: node, cost });
     if (node === end) {
       return [state[0], state[1]];
     }

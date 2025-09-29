@@ -8,7 +8,8 @@ import {
   Position,
 } from "geojson";
 import { compactNode } from "./compactor";
-import findPath from "./dijkstra";
+import findPathDijkstra from "./dijkstra";
+import findPathAStar from "./a-star";
 import preprocess from "./preprocessor";
 import roundCoord from "./round-coord";
 import { defaultKey } from "./topology";
@@ -108,16 +109,25 @@ export default class PathFinder<
               });
             }
           : undefined;
-      const pathResult = findPath(
-        this.graph.compactedVertices,
-        start,
-        finish,
-        directionBias
-          ? {
-              directionBias,
-            }
-          : undefined
-      );
+      const sharedOptions = {
+        ...(directionBias ? { directionBias } : {}),
+        ...(searchOptions.onNodeExpanded
+          ? { onNodeExpanded: searchOptions.onNodeExpanded }
+          : {}),
+      };
+
+      const pathResult =
+        searchOptions.algorithm === "astar"
+          ? findPathAStar(this.graph.compactedVertices, start, finish, {
+              ...sharedOptions,
+              coordinates: this.graph.sourceCoordinates,
+            })
+          : findPathDijkstra(
+              this.graph.compactedVertices,
+              start,
+              finish,
+              sharedOptions
+            );
 
       if (pathResult) {
         const [weight, path] = pathResult;
