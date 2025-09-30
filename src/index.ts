@@ -13,6 +13,8 @@ import findPathAStar from "./a-star";
 import preprocess from "./preprocessor";
 import roundCoord from "./round-coord";
 import { defaultKey } from "./topology";
+import type PathFinderWorkerPool from "./worker-pool";
+import type { WorkerSearchOptions } from "./worker-pool";
 import {
   DirectionBiasContext,
   Key,
@@ -20,7 +22,58 @@ import {
   PathFinderGraph,
   PathFinderOptions,
   PathFinderSearchOptions,
+  PathFinderWorkerOptions,
 } from "./types";
+
+type PathFinderInternalOptions = {
+  hasEdgeDataReducer?: boolean;
+  disableWorkerPool?: boolean;
+};
+
+let workerPoolModulePromise:
+  | Promise<typeof import("./worker-pool") | undefined>
+  | undefined;
+
+function loadWorkerPoolModule() {
+  if (!workerPoolModulePromise) {
+    workerPoolModulePromise = new Promise((resolve) => {
+      const requireFn: undefined | ((id: string) => unknown) =
+        typeof require === "function"
+          ? require
+          : Function(
+              "return typeof require !== 'undefined' ? require : undefined;"
+            )();
+      if (typeof requireFn !== "function") {
+        resolve(undefined);
+        return;
+      }
+
+      const pathModule = requireFn("path") as typeof import("path");
+      const fsModule = requireFn("fs") as typeof import("fs");
+      const moduleDir =
+        Function(
+          "return typeof __dirname !== 'undefined' ? __dirname : undefined;"
+        )() || process.cwd();
+      const candidates = [
+        pathModule.resolve(moduleDir, "worker-pool.js"),
+        pathModule.resolve(moduleDir, "worker-pool.ts"),
+        pathModule.resolve(moduleDir, "../dist/cjs/worker-pool.js"),
+        pathModule.resolve(moduleDir, "../dist/esm/worker-pool.js"),
+      ];
+
+      for (const candidate of candidates) {
+        if (fsModule.existsSync(candidate)) {
+          resolve(requireFn(candidate) as typeof import("./worker-pool"));
+          return;
+        }
+      }
+
+      resolve(undefined);
+    });
+  }
+
+  return workerPoolModulePromise;
+}
 
 export default class PathFinder<
   TEdgeReduce,
@@ -28,13 +81,36 @@ export default class PathFinder<
 > {
   graph: PathFinderGraph<TEdgeReduce>;
   options: PathFinderOptions<TEdgeReduce, TProperties>;
+  private readonly hasEdgeDataReducer: boolean;
+  private readonly workerOptions?: PathFinderWorkerOptions;
+  private workerPool?: PathFinderWorkerPool<TEdgeReduce> | null;
 
   constructor(
     network: FeatureCollection<LineString, TProperties>,
-    options: PathFinderOptions<TEdgeReduce, TProperties> = {}
+    options?: PathFinderOptions<TEdgeReduce, TProperties>
+  );
+  constructor(
+    graph: PathFinderGraph<TEdgeReduce>,
+    options?: PathFinderOptions<TEdgeReduce, TProperties>,
+    internal?: PathFinderInternalOptions
+  );
+  constructor(
+    networkOrGraph:
+      | FeatureCollection<LineString, TProperties>
+      | PathFinderGraph<TEdgeReduce>,
+    options: PathFinderOptions<TEdgeReduce, TProperties> = {},
+    internal: PathFinderInternalOptions = {}
   ) {
-    this.graph = preprocess(network, options);
+    if (isPathFinderGraph<TEdgeReduce>(networkOrGraph)) {
+      this.graph = networkOrGraph;
+    } else {
+      this.graph = preprocess(networkOrGraph, options);
+    }
     this.options = options;
+    this.hasEdgeDataReducer =
+      internal.hasEdgeDataReducer ?? "edgeDataReducer" in options;
+    this.workerOptions = options.worker;
+    this.workerPool = internal.disableWorkerPool ? null : undefined;
 
     // if (
     //   Object.keys(this.graph.compactedVertices).filter(function (k) {
@@ -53,13 +129,31 @@ export default class PathFinder<
     searchOptions: PathFinderSearchOptions = {}
   ): Path<TEdgeReduce> | undefined {
     const { key = defaultKey, tolerance = 1e-5 } = this.options;
-    const startCoordinates = roundCoord(a.geometry.coordinates, tolerance);
-    const finishCoordinates = roundCoord(b.geometry.coordinates, tolerance);
-    const start = this._resolveVertexKey(startCoordinates, key, tolerance);
-    const finish = this._resolveVertexKey(finishCoordinates, key, tolerance);
+    const start = this._resolveVertexKey(
+      roundCoord(a.geometry.coordinates, tolerance),
+      key,
+      tolerance
+    );
+    const finish = this._resolveVertexKey(
+      roundCoord(b.geometry.coordinates, tolerance),
+      key,
+      tolerance
+    );
 
     // We can't find a path if start or finish isn't in the
     // set of non-compacted vertices
+    if (!this.graph.vertices[start] || !this.graph.vertices[finish]) {
+      return undefined;
+    }
+
+    return this.findPathFromVertexKeys(start, finish, searchOptions);
+  }
+
+  findPathFromVertexKeys(
+    start: Key,
+    finish: Key,
+    searchOptions: PathFinderSearchOptions = {}
+  ): Path<TEdgeReduce> | undefined {
     if (!this.graph.vertices[start] || !this.graph.vertices[finish]) {
       return undefined;
     }
@@ -212,28 +306,27 @@ export default class PathFinder<
             )
             .concat([this.graph.sourceCoordinates[finish]]),
           weight,
-          edgeDatas:
-            "edgeDataReducer" in this.options
-              ? path.reduce(
-                  (
-                    edges: (TEdgeReduce | undefined)[],
-                    vertexKey: Key,
-                    index: number,
-                    vertexKeys: Key[]
-                  ) => {
-                    if (index > 0) {
-                      edges.push(
-                        this.graph.compactedEdges[vertexKeys[index - 1]][
-                          vertexKey
-                        ]
-                      );
-                    }
+          edgeDatas: this.hasEdgeDataReducer
+            ? path.reduce(
+                (
+                  edges: (TEdgeReduce | undefined)[],
+                  vertexKey: Key,
+                  index: number,
+                  vertexKeys: Key[]
+                ) => {
+                  if (index > 0) {
+                    edges.push(
+                      this.graph.compactedEdges[vertexKeys[index - 1]][
+                        vertexKey
+                      ]
+                    );
+                  }
 
-                    return edges;
-                  },
-                  []
-                )
-              : undefined,
+                  return edges;
+                },
+                []
+              )
+            : undefined,
         };
       } else {
         return undefined;
@@ -242,6 +335,95 @@ export default class PathFinder<
       this._removePhantom(phantomStart);
       this._removePhantom(phantomEnd);
     }
+  }
+
+  async findPathAsync(
+    a: Feature<Point>,
+    b: Feature<Point>,
+    searchOptions: PathFinderSearchOptions = {}
+  ): Promise<Path<TEdgeReduce> | undefined> {
+    const pool = await this._ensureWorkerPool();
+    if (!pool || this._hasWorkerSearchCallbacks(searchOptions)) {
+      return this.findPath(a, b, searchOptions);
+    }
+
+    const { key = defaultKey, tolerance = 1e-5 } = this.options;
+    const start = this._resolveVertexKey(
+      roundCoord(a.geometry.coordinates, tolerance),
+      key,
+      tolerance
+    );
+    const finish = this._resolveVertexKey(
+      roundCoord(b.geometry.coordinates, tolerance),
+      key,
+      tolerance
+    );
+
+    if (!this.graph.vertices[start] || !this.graph.vertices[finish]) {
+      return undefined;
+    }
+
+    return pool.schedule(start, finish, this._toWorkerSearchOptions(searchOptions));
+  }
+
+  async close() {
+    if (this.workerPool && this.workerPool !== null) {
+      await this.workerPool.close();
+      this.workerPool = undefined;
+    }
+  }
+
+  private _hasWorkerSearchCallbacks(options: PathFinderSearchOptions) {
+    return Boolean(
+      options.directionBias ||
+        options.transitionGuard ||
+        options.onNodeExpanded
+    );
+  }
+
+  private _toWorkerSearchOptions(
+    options: PathFinderSearchOptions
+  ): WorkerSearchOptions {
+    const workerOptions: WorkerSearchOptions = {};
+    if (options.algorithm) {
+      workerOptions.algorithm = options.algorithm;
+    }
+    return workerOptions;
+  }
+
+  private async _ensureWorkerPool(): Promise<
+    PathFinderWorkerPool<TEdgeReduce> | undefined
+  > {
+    if (this.workerPool === null) {
+      return undefined;
+    }
+
+    if (!this.workerOptions?.enabled || this.hasEdgeDataReducer) {
+      this.workerPool = null;
+      return undefined;
+    }
+
+    if (this.workerPool) {
+      return this.workerPool;
+    }
+
+    const module = await loadWorkerPoolModule();
+    if (!module) {
+      this.workerPool = null;
+      return undefined;
+    }
+    if (!module.isWorkerThreadsAvailable()) {
+      this.workerPool = null;
+      return undefined;
+    }
+
+    const pool = new module.default<TEdgeReduce>({
+      graph: this.graph,
+      hasEdgeDataReducer: this.hasEdgeDataReducer,
+      options: this.workerOptions,
+    });
+    this.workerPool = pool;
+    return pool;
   }
 
   private _resolveCompactedCoordinate(from: Key, to: Key) {
@@ -304,7 +486,7 @@ export default class PathFinder<
     this.graph.compactedVertices[n] = phantom.edges;
     this.graph.compactedCoordinates[n] = phantom.coordinates;
 
-    if ("edgeDataReducer" in this.options) {
+    if (this.hasEdgeDataReducer) {
       this.graph.compactedEdges[n] = phantom.reducedEdges;
     }
 
@@ -338,7 +520,7 @@ export default class PathFinder<
     Object.keys(this.graph.compactedCoordinates[n]).forEach((neighbor) => {
       delete this.graph.compactedCoordinates[neighbor][n];
     });
-    if ("edgeDataReducer" in this.options) {
+    if (this.hasEdgeDataReducer) {
       Object.keys(this.graph.compactedEdges[n]).forEach((neighbor) => {
         delete this.graph.compactedEdges[neighbor][n];
       });
@@ -365,4 +547,19 @@ export function pathToGeoJSON<TEdgeReduce>(
     const { weight, edgeDatas } = path;
     return lineString(path.path, { weight, edgeDatas });
   }
+}
+
+function isPathFinderGraph<TEdgeReduce>(
+  value:
+    | FeatureCollection<LineString, GeoJsonProperties>
+    | PathFinderGraph<TEdgeReduce>
+): value is PathFinderGraph<TEdgeReduce> {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    "vertices" in value &&
+    "edgeData" in value &&
+    "sourceCoordinates" in value &&
+    "compactedVertices" in value
+  );
 }
