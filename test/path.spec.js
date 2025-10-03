@@ -245,6 +245,118 @@ test("direction bias favours moving toward the destination", () => {
   expect(unbiased.weight).toBeLessThan(biased.weight);
 });
 
+test("can find multiple paths concurrently using worker threads", async () => {
+  const network = {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [0, 0],
+            [1, 0],
+            [1, 1],
+          ],
+        },
+      },
+      {
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [1, 1],
+            [2, 1],
+          ],
+        },
+      },
+    ],
+  };
+
+  const pathfinder = new PathFinder(network, {
+    worker: { enabled: true, poolSize: 2 },
+  });
+
+  const [pathA, pathB] = await Promise.all([
+    pathfinder.findPathAsync(point([0, 0]), point([1, 1])),
+    pathfinder.findPathAsync(point([1, 0]), point([2, 1])),
+  ]);
+
+  expect(pathA).toBeTruthy();
+  expect(pathB).toBeTruthy();
+  await pathfinder.close();
+});
+
+test("findPathAsync falls back to synchronous behaviour when callbacks are provided", async () => {
+  const pathfinder = new PathFinder(geojson, {
+    worker: { enabled: true, poolSize: 2 },
+  });
+
+  const result = await pathfinder.findPathAsync(
+    point([8.44460166, 59.48947469]),
+    point([8.44651, 59.513920000000006]),
+    {
+      directionBias: () => 0,
+    }
+  );
+
+  expect(result).toBeTruthy();
+  await pathfinder.close();
+});
+
+test("ESM build resolves worker pool for findPathAsync", async () => {
+  const { default: ESMPathFinder } = await import("../dist/esm/index.js");
+  const network = {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [0, 0],
+            [1, 0],
+          ],
+        },
+      },
+      {
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [1, 0],
+            [1, 1],
+          ],
+        },
+      },
+      {
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [1, 0],
+            [2, 0],
+          ],
+        },
+      },
+    ],
+  };
+
+  const pathfinder = new ESMPathFinder(network, {
+    worker: { enabled: true, poolSize: 2 },
+  });
+
+  const [pathA, pathB] = await Promise.all([
+    pathfinder.findPathAsync(point([0, 0]), point([1, 1])),
+    pathfinder.findPathAsync(point([1, 0]), point([2, 0])),
+  ]);
+
+  expect(pathA).toBeTruthy();
+  expect(pathB).toBeTruthy();
+  expect(pathfinder.workerPool).toBeTruthy();
+  await pathfinder.close();
+});
+
 test("transition guard blocks reversing moves", () => {
   const network = {
     type: "FeatureCollection",
