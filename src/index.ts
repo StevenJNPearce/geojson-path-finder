@@ -110,6 +110,8 @@ export default class PathFinder<
             }
           : undefined;
       const sharedOptions = {
+        isTurnAllowed: ({ path, from, to }: { path: Key[]; from: Key; to: Key }) =>
+          this._isTurnObtuse(path, from, to),
         ...(directionBias ? { directionBias } : {}),
         ...(searchOptions.onNodeExpanded
           ? { onNodeExpanded: searchOptions.onNodeExpanded }
@@ -192,6 +194,125 @@ export default class PathFinder<
       return undefined;
     }
     return coordinates[coordinates.length - 1];
+  }
+
+  private _isTurnObtuse(path: Key[], from: Key, to: Key): boolean {
+    const prevKey = path.length > 1 ? path[path.length - 2] : undefined;
+    const prevPrevKey = path.length > 2 ? path[path.length - 3] : undefined;
+
+    const currentCoordinate = this._getCoordinateForKey(from, prevKey);
+    const nextCoordinate = this._getCoordinateForKey(to, from);
+
+    if (!currentCoordinate || !nextCoordinate) {
+      return false;
+    }
+
+    const intermediateCoordinates =
+      this.graph.compactedCoordinates[from]?.[to] ?? [];
+
+    const forwardCoordinates = [currentCoordinate];
+
+    for (const coordinate of intermediateCoordinates) {
+      if (
+        coordinate &&
+        !this._coordinatesEqual(
+          coordinate,
+          forwardCoordinates[forwardCoordinates.length - 1]
+        )
+      ) {
+        forwardCoordinates.push(coordinate);
+      }
+    }
+
+    if (
+      !this._coordinatesEqual(
+        nextCoordinate,
+        forwardCoordinates[forwardCoordinates.length - 1]
+      )
+    ) {
+      forwardCoordinates.push(nextCoordinate);
+    }
+
+    if (forwardCoordinates.length < 2) {
+      return true;
+    }
+
+    if (prevKey) {
+      const prevCoordinate = this._getCoordinateForKey(prevKey, prevPrevKey);
+      if (!prevCoordinate) {
+        return false;
+      }
+
+      if (
+        !this._isAngleObtuse(
+          prevCoordinate,
+          forwardCoordinates[0],
+          forwardCoordinates[1]
+        )
+      ) {
+        return false;
+      }
+    }
+
+    for (let i = 1; i < forwardCoordinates.length - 1; i++) {
+      const before = forwardCoordinates[i - 1];
+      const middle = forwardCoordinates[i];
+      const after = forwardCoordinates[i + 1];
+      if (!this._isAngleObtuse(before, middle, after)) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private _getCoordinateForKey(key: Key, previousKey?: Key) {
+    const directCoordinate = this.graph.sourceCoordinates[key];
+    if (directCoordinate) {
+      return directCoordinate;
+    }
+
+    if (!previousKey) {
+      return undefined;
+    }
+
+    return this._resolveCompactedCoordinate(previousKey, key);
+  }
+
+  private _isAngleObtuse(
+    before: Position,
+    middle: Position,
+    after: Position
+  ): boolean {
+    const vectorToBefore: [number, number] = [
+      before[0] - middle[0],
+      before[1] - middle[1],
+    ];
+    const vectorToAfter: [number, number] = [
+      after[0] - middle[0],
+      after[1] - middle[1],
+    ];
+
+    const lengthToBefore = Math.hypot(vectorToBefore[0], vectorToBefore[1]);
+    const lengthToAfter = Math.hypot(vectorToAfter[0], vectorToAfter[1]);
+
+    if (lengthToBefore === 0 || lengthToAfter === 0) {
+      return true;
+    }
+
+    const dotProduct =
+      vectorToBefore[0] * vectorToAfter[0] +
+      vectorToBefore[1] * vectorToAfter[1];
+
+    return dotProduct < 0;
+  }
+
+  private _coordinatesEqual(a: Position, b: Position) {
+    const tolerance = this.options.tolerance ?? 1e-5;
+    return (
+      Math.abs(a[0] - b[0]) <= tolerance &&
+      Math.abs(a[1] - b[1]) <= tolerance
+    );
   }
 
   private _resolveVertexKey(

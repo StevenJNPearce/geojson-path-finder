@@ -10,8 +10,11 @@ type DirectionBiasEvaluator = (input: {
   path: Key[];
 }) => number;
 
+type TurnEvaluator = (input: { path: Key[]; from: Key; to: Key }) => boolean;
+
 type Options = {
   directionBias?: DirectionBiasEvaluator;
+  isTurnAllowed?: TurnEvaluator;
   onNodeExpanded?: (context: { key: Key; cost: number }) => void;
 };
 
@@ -41,6 +44,12 @@ export default function findPath(
 
     const neighbours = graph[node];
     Object.keys(neighbours).forEach(function (n) {
+      if (
+        options.isTurnAllowed &&
+        !options.isTurnAllowed({ path: state[1], from: node, to: n })
+      ) {
+        return;
+      }
       const bias = options.directionBias
         ? options.directionBias({
             cost,
