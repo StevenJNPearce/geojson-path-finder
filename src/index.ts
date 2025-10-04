@@ -1,4 +1,6 @@
 import { lineString } from "@turf/helpers";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   Feature,
   FeatureCollection,
@@ -20,6 +22,11 @@ import {
   PathFinderOptions,
   PathFinderSearchOptions,
 } from "./types";
+import PathFinderWorkerPool from "./threading/worker-pool";
+import type {
+  ThreadSafePathFinderOptions,
+  WorkerInitData,
+} from "./threading/worker-types";
 
 export default class PathFinder<
   TEdgeReduce,
@@ -27,13 +34,38 @@ export default class PathFinder<
 > {
   graph: PathFinderGraph<TEdgeReduce>;
   options: PathFinderOptions<TEdgeReduce, TProperties>;
+  private readonly concurrency: number;
+  private readonly threadSafeOptions?: ThreadSafePathFinderOptions;
+  private workerPoolPromise?: Promise<
+    PathFinderWorkerPool<TEdgeReduce> | undefined
+  >;
+  private workerScriptPath?: string;
 
   constructor(
     network: FeatureCollection<LineString, TProperties>,
-    options: PathFinderOptions<TEdgeReduce, TProperties> = {}
+    options?: PathFinderOptions<TEdgeReduce, TProperties>
+  );
+  constructor(
+    graph: PathFinderGraph<TEdgeReduce>,
+    options: PathFinderOptions<TEdgeReduce, TProperties>,
+    settings: { preprocessed: true }
+  );
+  constructor(
+    networkOrGraph:
+      | FeatureCollection<LineString, TProperties>
+      | PathFinderGraph<TEdgeReduce>,
+    options: PathFinderOptions<TEdgeReduce, TProperties> = {},
+    settings?: { preprocessed?: boolean }
   ) {
-    this.graph = preprocess(network, options);
     this.options = options;
+    this.graph = settings?.preprocessed
+      ? (networkOrGraph as PathFinderGraph<TEdgeReduce>)
+      : preprocess(
+          networkOrGraph as FeatureCollection<LineString, TProperties>,
+          options
+        );
+    this.concurrency = this._normaliseConcurrency(options.concurrency);
+    this.threadSafeOptions = this._createThreadSafeOptions(options);
 
     // if (
     //   Object.keys(this.graph.compactedVertices).filter(function (k) {
@@ -186,6 +218,143 @@ export default class PathFinder<
       this._removePhantom(phantomStart);
       this._removePhantom(phantomEnd);
     }
+  }
+
+  async findPathAsync(
+    a: Feature<Point>,
+    b: Feature<Point>,
+    searchOptions: PathFinderSearchOptions = {}
+  ): Promise<Path<TEdgeReduce> | undefined> {
+    if (!this._shouldUseWorker(searchOptions)) {
+      return Promise.resolve(this.findPath(a, b, searchOptions));
+    }
+
+    const workerPool = await this._ensureWorkerPool();
+    if (!workerPool) {
+      return this.findPath(a, b, searchOptions);
+    }
+
+    return workerPool.run(a, b, searchOptions);
+  }
+
+  async close(): Promise<void> {
+    if (!this.workerPoolPromise) {
+      return;
+    }
+
+    const workerPool = await this.workerPoolPromise;
+    this.workerPoolPromise = undefined;
+    if (workerPool) {
+      await workerPool.destroy();
+    }
+  }
+
+  private _normaliseConcurrency(concurrency?: number): number {
+    if (!concurrency || !Number.isFinite(concurrency) || concurrency < 2) {
+      return 1;
+    }
+    return Math.max(1, Math.floor(concurrency));
+  }
+
+  private _createThreadSafeOptions(
+    options: PathFinderOptions<TEdgeReduce, TProperties>
+  ): ThreadSafePathFinderOptions | undefined {
+    if (options.key) {
+      return undefined;
+    }
+    if ("edgeDataReducer" in options) {
+      return undefined;
+    }
+
+    const safeOptions: ThreadSafePathFinderOptions = {};
+    if (options.tolerance !== undefined) {
+      safeOptions.tolerance = options.tolerance;
+    }
+
+    return safeOptions;
+  }
+
+  private _shouldUseWorker(searchOptions: PathFinderSearchOptions) {
+    if (this.concurrency <= 1 || !this.threadSafeOptions) {
+      return false;
+    }
+    return !this._searchOptionsContainCallbacks(searchOptions);
+  }
+
+  private _searchOptionsContainCallbacks(
+    searchOptions: PathFinderSearchOptions
+  ): boolean {
+    return (
+      typeof searchOptions.directionBias === "function" ||
+      typeof searchOptions.onNodeExpanded === "function"
+    );
+  }
+
+  private _ensureWorkerPool() {
+    if (!this.workerPoolPromise) {
+      this.workerPoolPromise = this._createWorkerPool();
+    }
+    return this.workerPoolPromise;
+  }
+
+  private async _createWorkerPool(): Promise<
+    PathFinderWorkerPool<TEdgeReduce> | undefined
+  > {
+    if (this.concurrency <= 1 || !this.threadSafeOptions) {
+      return undefined;
+    }
+
+    let workerThreads: typeof import("node:worker_threads");
+    try {
+      const dynamicImport = Function(
+        "specifier",
+        "return import(specifier);"
+      ) as (specifier: string) => Promise<
+        typeof import("node:worker_threads")
+      >;
+      workerThreads = await dynamicImport("node:worker_threads");
+    } catch (error) {
+      return undefined;
+    }
+
+    if (!workerThreads.isMainThread) {
+      return undefined;
+    }
+
+    const initData: WorkerInitData<TEdgeReduce> = {
+      graph: this.graph,
+      options: this.threadSafeOptions,
+    };
+
+    const scriptPath = this._resolveWorkerScriptPath();
+    return new PathFinderWorkerPool<TEdgeReduce>(
+      workerThreads.Worker,
+      scriptPath,
+      initData,
+      this.concurrency
+    );
+  }
+
+  private _resolveWorkerScriptPath(): string {
+    if (!this.workerScriptPath) {
+      if (typeof __dirname !== "undefined") {
+        this.workerScriptPath = path.resolve(
+          __dirname,
+          "threading",
+          "find-path.worker.js"
+        );
+      } else {
+        const importMetaUrl = Function(
+          "return import.meta.url;"
+        )() as string;
+        const workerUrl = new URL(
+          "./threading/find-path.worker.js",
+          importMetaUrl
+        );
+        this.workerScriptPath = fileURLToPath(workerUrl);
+      }
+    }
+    return this.workerScriptPath;
   }
 
   private _resolveCompactedCoordinate(from: Key, to: Key) {
