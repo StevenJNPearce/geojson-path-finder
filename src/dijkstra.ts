@@ -10,16 +10,8 @@ type DirectionBiasEvaluator = (input: {
   path: Key[];
 }) => number;
 
-type TransitionGuardEvaluator = (input: {
-  cost: number;
-  from: Key;
-  to: Key;
-  path: Key[];
-}) => boolean;
-
 type Options = {
   directionBias?: DirectionBiasEvaluator;
-  transitionGuard?: TransitionGuardEvaluator;
   onNodeExpanded?: (context: { key: Key; cost: number }) => void;
 };
 
@@ -49,18 +41,6 @@ export default function findPath(
 
     const neighbours = graph[node];
     Object.keys(neighbours).forEach(function (n) {
-      if (
-        options.transitionGuard &&
-        options.transitionGuard({
-          cost,
-          from: node,
-          to: n,
-          path: state[1],
-        }) === false
-      ) {
-        return;
-      }
-
       const bias = options.directionBias
         ? options.directionBias({
             cost,
