@@ -95,3 +95,74 @@ test("findPath maps 2D start and finish onto 3D vertices", () => {
     [2, 0, 10],
   ]);
 });
+
+test("findPathAsync resolves multiple requests in parallel", async () => {
+  const network = {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [0, 0],
+            [1, 0],
+            [2, 0],
+            [3, 0],
+          ],
+        },
+        properties: {},
+      },
+    ],
+  };
+
+  const start = point([0, 0]);
+  const finish = point([3, 0]);
+  const pathfinder = new PathFinder(network, { concurrency: 2 });
+  const expected = pathfinder.findPath(start, finish);
+
+  const [resultA, resultB, resultC] = await Promise.all([
+    pathfinder.findPathAsync(start, finish),
+    pathfinder.findPathAsync(start, finish),
+    pathfinder.findPathAsync(start, finish),
+  ]);
+
+  expect(resultA).toEqual(expected);
+  expect(resultB).toEqual(expected);
+  expect(resultC).toEqual(expected);
+
+  await pathfinder.close();
+});
+
+test("findPathAsync falls back when callbacks are provided", async () => {
+  const network = {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [0, 0],
+            [1, 0],
+            [2, 0],
+          ],
+        },
+        properties: {},
+      },
+    ],
+  };
+
+  const start = point([0, 0]);
+  const finish = point([2, 0]);
+  const pathfinder = new PathFinder(network, { concurrency: 2 });
+
+  const bias = () => 0;
+  const path = await pathfinder.findPathAsync(start, finish, {
+    directionBias: bias,
+  });
+
+  expect(path).toEqual(pathfinder.findPath(start, finish, { directionBias: bias }));
+
+  await pathfinder.close();
+});

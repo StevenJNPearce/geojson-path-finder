@@ -63,6 +63,25 @@ const pathLineString = pathToGeoJSON(pathFinder.findPath(start, finish));
 
 (If `findPath` does not find a path, pathToGeoJSON will also return `undefined`.)
 
+### Parallel path searches
+
+When running in Node.js you can process multiple route calculations in parallel
+by enabling worker threads. Provide a `concurrency` value greater than `1` when
+creating the `PathFinder`, then call the asynchronous `findPathAsync` method:
+
+```javascript
+const pathFinder = new PathFinder(geojson, { concurrency: 4 });
+const [first, second] = await Promise.all([
+  pathFinder.findPathAsync(startA, finishA),
+  pathFinder.findPathAsync(startB, finishB),
+]);
+```
+
+The asynchronous API falls back to the main thread whenever worker threads are
+unavailable or when a request uses callbacks such as `directionBias` or
+`onNodeExpanded`. Custom `key` or `edgeDataReducer` options are also not
+compatible with worker execution.
+
 ### Steering the search direction
 
 `findPath` accepts an optional third argument where you can provide search specific options. The
@@ -105,6 +124,8 @@ use to control the behaviour of the path finder. Available options:
 - `tolerance` (default `1e-5`) controls the tolerance for how close vertices in the GeoJSON can be
   before considered being the same vertice; you can say that coordinates closer than this will be
   snapped together into one coordinate
+- `concurrency` enables `findPathAsync` to use the specified number of worker
+  threads. Values lower than `2` disable worker execution.
 - `edgeDataReducer` can optionally be used to store data present in the GeoJSON on each edge of
   the routing graph; typically, this can be used for storing things like street names; if specified,
   the reduced data is present on found paths under the `edgeDatas` property

@@ -89,6 +89,11 @@ export type PathFinderOptions<TEdgeReduce, TProperties> = {
   key?: (coordinates: Position) => string;
   compact?: boolean;
   /**
+   * Number of worker threads that should be used to evaluate `findPathAsync`
+   * calls in parallel. Values lower than 2 disable multithreading.
+   */
+  concurrency?: number;
+  /**
    * Calculate weight for an edge from a node at position a to a node at position b
    * @param {Position} a coordinate of node A
    * @param {Position} b coordinate of node B
