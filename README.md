@@ -63,28 +63,6 @@ const pathLineString = pathToGeoJSON(pathFinder.findPath(start, finish));
 
 (If `findPath` does not find a path, pathToGeoJSON will also return `undefined`.)
 
-### Asynchronous path searches
-
-When you need to resolve multiple paths at the same time you can enable the
-optional worker thread pool and use `findPathAsync`:
-
-```javascript
-const pathFinder = new PathFinder(geojson, {
-  worker: { enabled: true, poolSize: 4 },
-});
-
-const [a, b] = await Promise.all([
-  pathFinder.findPathAsync(pointA, pointB),
-  pathFinder.findPathAsync(pointC, pointD),
-]);
-
-await pathFinder.close();
-```
-
-When worker threads are unavailable, or when the search options contain
-callbacks such as `directionBias`, `findPathAsync` automatically falls back to
-the synchronous `findPath` implementation.
-
 ### Steering the search direction
 
 `findPath` accepts an optional third argument where you can provide search specific options. The
@@ -178,11 +156,6 @@ use to control the behaviour of the path finder. Available options:
   the routing graph; typically, this can be used for storing things like street names; if specified,
   the reduced data is present on found paths under the `edgeDatas` property
 - `edgeDataSeed` is a function returning taking a network feature's `properties` as argument and returning the seed used when reducing edge data with the `edgeDataReducer` above
-- `worker` enables path finding in [worker threads](#asynchronous-path-searches). The object accepts the following properties:
-  - `enabled` turns the worker pool on (default `false`).
-  - `poolSize` optionally limits the number of concurrent workers. When omitted
-    the available CPU core count is used. Worker threads are only used when the
-    search options do not provide callbacks.
 
 ## Weight functions
 
